@@ -1,0 +1,22 @@
+{
+  "run_name": "gaia-mvp",
+  "task_model": "glm-5",
+  "judge_model": "glm-5",
+  "reflection_model": "glm-5",
+  "target_spend_usd": 75,
+  "hard_cap_spend_usd": 100,
+  "max_llm_calls_per_task": 6,
+  "max_search_calls_per_task": 6,
+  "max_output_tokens_per_call": 800,
+  "splits": {
+    "level1_train": 12,
+    "level1_holdout": 8,
+    "level2_transfer": 5
+  },
+  "gepa": {
+    "max_candidates": 8,
+    "minibatch_size": 3,
+    "max_task_runs": 24,
+    "reflection_calls": 8
+  }
+}

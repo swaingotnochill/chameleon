@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from typing import Any
 
 from .types import Score, Trace, find_spans
+
+# Shared semaphore to cap concurrent LLM judge API calls.
+# Prevents rate-limiting when multiple samples are judged in parallel.
+_llm_semaphore: asyncio.Semaphore | None = None
+
+
+def set_llm_concurrency(limit: int) -> None:
+    """Set max concurrent LLM judge calls. Call before evaluation starts."""
+    global _llm_semaphore
+    _llm_semaphore = asyncio.Semaphore(limit)
 
 
 def exact_match(trace: Trace, expected: Any) -> list[Score]:
@@ -165,6 +177,178 @@ def _create_llm_judge(
     return _judge
 
 
+def trace_llm_judge(
+    *,
+    model: str = "glm-5",
+    criteria: str | None = None,
+    template: str | None = None,
+):
+    """LLM-as-judge that evaluates the full execution trace.
+
+    Unlike ``llm_judge`` which only compares final output vs expected,
+    this scorer serializes every span in the trace tree (LLM calls, tool
+    invocations, errors, durations) and asks the judge to reason over the
+    agent's *entire decision-making process*.
+
+    Args:
+        model: Model string passed to ``_call_model``.
+        criteria: Optional custom grading criteria. Default evaluates
+            correctness, reasoning quality, and efficiency.
+        template: Custom prompt template with ``{trace_summary}``,
+            ``{question}``, ``{expected}``, ``{instructions}`` placeholders.
+
+    Returns:
+        Async function that can be awaited by the runner.
+    """
+    tmpl = template or TRACE_JUDGE_TEMPLATE
+    instructions = criteria or TRACE_JUDGE_INSTRUCTIONS
+
+    async def _judge(trace: Trace, expected: Any) -> list[Score]:
+        if expected is None:
+            return []
+
+        trace_text = _serialize_trace(trace.root, depth=0)
+        prompt = tmpl.format(
+            trace_summary=trace_text,
+            question=str(trace.input or ""),
+            expected=str(expected),
+            instructions=instructions,
+        )
+
+        completion = await _call_model(model, prompt)
+
+        # Extract structured verdict
+        import re
+
+        grade_match = re.search(r"(?i)GRADE\s*:\s*([CPI])", completion)
+        if not grade_match:
+            return [
+                Score(
+                    name="trace_llm_judge",
+                    value=0.0,
+                    reason=f"grade not found in response: {completion[:300]}",
+                )
+            ]
+
+        letter = grade_match.group(1).upper()
+        value = {"C": 1.0, "P": 0.5, "I": 0.0}.get(letter, 0.0)
+
+        return [
+            Score(
+                name="trace_llm_judge",
+                value=value,
+                reason=completion.strip(),
+            )
+        ]
+
+    return _judge
+
+
+def _serialize_trace(span: Any, depth: int = 0) -> str:
+    """Recursively serialize a Span tree into a human-readable text format.
+
+    Handles both evaris.Span and etrace.Span objects (duck-typed).
+    """
+    indent = "  " * depth
+    lines: list[str] = []
+
+    name = getattr(span, "name", "unknown")
+    kind = getattr(span, "kind", "")
+    status = getattr(span, "status", "ok")
+    duration = getattr(span, "duration_ms", 0)
+    model = getattr(span, "model", None)
+    usage = getattr(span, "usage", None)
+    error = getattr(span, "error", None)
+    span_input = getattr(span, "input", None)
+    span_output = getattr(span, "output", None)
+    attributes = getattr(span, "attributes", None) or {}
+
+    header = f"{indent}- [{kind}] {name}"
+    if model:
+        header += f" (model={model})"
+    header += f" [{status}] ({duration:.0f}ms)"
+    lines.append(header)
+
+    if error:
+        err_msg = str(error) if not isinstance(error, str) else error
+        lines.append(f"{indent}  ERROR: {err_msg}")
+
+    if span_input is not None:
+        input_str = _truncate(str(span_input), max_len=500)
+        lines.append(f"{indent}  input: {input_str}")
+
+    if span_output is not None:
+        output_str = _truncate(str(span_output), max_len=500)
+        lines.append(f"{indent}  output: {output_str}")
+
+    if usage:
+        lines.append(
+            f"{indent}  tokens: in={getattr(usage, 'input', '?')}, "
+            f"out={getattr(usage, 'output', '?')}"
+        )
+
+    interesting_attrs = {
+        k: v for k, v in attributes.items() if not k.startswith("etrace.")
+    }
+    if interesting_attrs:
+        for k, v in list(interesting_attrs.items())[:8]:
+            lines.append(f"{indent}  {k}: {v}")
+
+    children = getattr(span, "children", []) or []
+    for child in children:
+        lines.append(_serialize_trace(child, depth=depth + 1))
+
+    return "\n".join(lines)
+
+
+def _truncate(text: str, max_len: int = 500) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + f" ... ({len(text)} chars total)"
+
+
+# ── Trace-judge prompt template ──────────────────────────────────────
+
+
+TRACE_JUDGE_TEMPLATE = """\
+You are an expert eval judge. You will review an agent's FULL execution trace —
+every LLM call, tool invocation, error, and intermediate output — and assess
+whether the agent answered the task correctly and reasoned well.
+
+[BEGIN DATA]
+***
+[Task Question]: {question}
+***
+[Expected Answer]: {expected}
+***
+[Agent Execution Trace]:
+{trace_summary}
+***
+[END DATA]
+
+{instructions}
+"""
+
+
+TRACE_JUDGE_INSTRUCTIONS = """\
+Analyze the full trace and evaluate the agent on three dimensions:
+
+1. **Correctness**: Does the final answer match the expected answer? Is it factually accurate?
+2. **Reasoning**: Did the agent follow a sound reasoning chain? Did it use tools appropriately? Did it verify its answer?
+3. **Efficiency**: Were there unnecessary tool calls, redundant LLM calls, or wasted computation?
+
+Walk through the trace step by step. For each span, note what happened and whether
+it was appropriate. Then give your overall verdict.
+
+After your analysis, end with your final grade on the LAST line formatted as:
+GRADE: $LETTER
+where LETTER is one of:
+  C = correct (answer is right, reasoning is sound)
+  P = partially correct (close but not fully right, or right answer via flawed reasoning)
+  I = incorrect (wrong answer, or correct answer via clearly broken reasoning)
+"""
+
+
 # ── Prompt templates (based on OpenAI closedqa / inspect-ai model_graded_qa) ───
 
 
@@ -232,6 +416,7 @@ async def _call_model(model: str, prompt: str) -> str:
 
     Uses the openai SDK by default. The model string can be a provider/model pair
     like "openai/gpt-4o" or "anthropic/claude-sonnet-4-20250514".
+    Respects the global ``_llm_semaphore`` for concurrency rate-limiting.
 
     Users can monkey-patch this function to use any provider:
         import evaris.scorers as scorers
@@ -241,13 +426,24 @@ async def _call_model(model: str, prompt: str) -> str:
         from openai import AsyncOpenAI
 
         provider, model_name = _parse_model_string(model)
-        client = AsyncOpenAI(base_url=_provider_base_url(
-            provider), api_key=_provider_key(provider))
-        response = await client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-        )
+        base_url = _provider_base_url(provider) or os.environ.get("OPENAI_BASE_URL")
+        api_key = _provider_key(provider) or os.environ.get("OPENAI_API_KEY")
+        client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+
+        if _llm_semaphore is not None:
+            async with _llm_semaphore:
+                response = await client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                )
+        else:
+            response = await client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+            )
+
         return response.choices[0].message.content or ""
     except ImportError:
         raise ImportError(

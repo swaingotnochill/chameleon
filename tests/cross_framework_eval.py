@@ -40,7 +40,7 @@ if not os.environ.get("OPENAI_API_KEY"):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 ZAI_BASE_URL = "https://api.z.ai/api/paas/v4"
-ZAI_MODEL = "glm-4.7"
+ZAI_MODEL = "glm-4.5"
 REQUEST_DELAY = 2.0  # seconds between requests to avoid rate limiting
 N_SAMPLES = 10  # Override: set N_SAMPLES env var or use --full for all 20
 try:
@@ -502,7 +502,7 @@ async def eval_phoenix(responses: list[AgentResponse], judge_results: dict = Non
     """Evaluate using Arize Phoenix-style evals.
 
     Note: Phoenix's CorrectnessEvaluator requires structured JSON output (function calling)
-    from the LLM. ZAI's glm-4.7 does not support this. We implement Phoenix-style
+    from the LLM. ZAI's glm-4.5 does not support this. We implement Phoenix-style
     evaluation using the same approach Phoenix would (LLM-as-judge) but without
     the structured output requirement.
     """
@@ -517,7 +517,7 @@ async def eval_phoenix(responses: list[AgentResponse], judge_results: dict = Non
 
     # LLM-based: correctness (using shared judge results)
     # NOTE: Phoenix requires structured JSON output from the LLM (function calling).
-    # ZAI's glm-4.7 does not support structured output, so we implement
+    # ZAI's glm-4.5 does not support structured output, so we implement
     # Phoenix-style evaluation manually with our shared LLM judge.
     print(f"    Phoenix does not support ZAI endpoint (requires structured output).")
     print(f"    Using Phoenix-style manual LLM judge as fallback...")
@@ -721,7 +721,7 @@ async def main():
     print("╔══════════════════════════════════════════════════════════════════════════════╗")
     print("║  Cross-Framework Agent Evaluation Comparison                                ║")
     print("║                                                                              ║")
-    print("║  Agent:    LLM (ZAI glm-4.7) + calculator tool                               ║")
+    print("║  Agent:    LLM (ZAI glm-4.5) + calculator tool                               ║")
     print("║  Dataset:  20 Q&A (15 factual SimpleQA + 5 math)                              ║")
     print("║  Frameworks: mvp-evals · LangSmith · RAGAS · Arize Phoenix                   ║")
     print("║  All use same LLM-as-judge + rule-based scorers                              ║")

@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>chameleon - self-healing agents</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+  :root{
+    --ink:#0a0a0a;
+    --cream:#f4f1ea;
+    --cream-2:#efebe2;
+    --line:#1c1c1c;
+    --line-soft:rgba(10,10,10,.12);
+    --accent:#ff4d2e;
+    --green:#3a9d6e;
+    --blue:#2f6f9f;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+    --disp:'Space Grotesk', system-ui, sans-serif;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;background:#000;}
+  body{
+    display:flex;align-items:center;justify-content:center;
+    min-height:100vh;font-family:var(--mono);overflow:hidden;
+  }
+
+  .stage{
+    position:relative;width:100%;max-width:1080px;aspect-ratio:16/10;
+    background:var(--cream);overflow:hidden;
+    box-shadow:0 40px 120px rgba(0,0,0,.6);
+  }
+  .stage::before{
+    content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background-image:
+      linear-gradient(rgba(10,10,10,.035) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(10,10,10,.035) 1px,transparent 1px);
+    background-size:26px 26px;opacity:.9;
+  }
+  .stage::after{
+    content:"";position:absolute;inset:0;z-index:60;pointer-events:none;mix-blend-mode:multiply;opacity:.05;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  .scene{
+    position:absolute;inset:0;z-index:2;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:6% 7%;opacity:0;
+  }
+
+  .hud{
+    position:absolute;z-index:40;font-family:var(--mono);
+    font-size:11px;letter-spacing:.08em;color:rgba(10,10,10,.5);
+    text-transform:uppercase;
+  }
+  .hud.tl{top:22px;left:26px;}
+  .hud.tr{top:22px;right:26px;display:flex;align-items:center;gap:8px;}
+  .hud.bl{bottom:20px;left:26px;}
+  .hud.br{bottom:20px;right:26px;}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 rgba(255,77,46,.5);animation:pulse 1.8s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,77,46,.45);}70%{box-shadow:0 0 0 7px rgba(255,77,46,0);}100%{box-shadow:0 0 0 0 rgba(255,77,46,0);}}
+
+  .progress{position:absolute;left:0;bottom:0;height:3px;background:var(--accent);width:0;z-index:50;}
+
+  .kicker{
+    font-family:var(--mono);font-size:12px;letter-spacing:.42em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:22px;
+  }
+  .big{
+    font-family:var(--disp);font-weight:700;color:var(--ink);
+    line-height:.98;letter-spacing:-.02em;text-align:center;
+  }
+  .s1 .big{font-size:clamp(40px,8.2vw,102px);}
+  .scene .big{font-size:clamp(34px,6.1vw,74px);}
+  .lede{
+    font-family:var(--mono);font-size:clamp(13px,1.5vw,17px);color:rgba(10,10,10,.62);
+    margin-top:24px;text-align:center;max-width:680px;line-height:1.6;
+  }
+
+  .mark{
+    width:64px;height:64px;border:2px solid var(--ink);border-radius:13px;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--disp);font-weight:700;font-size:34px;color:var(--ink);
+    margin-bottom:26px;background:var(--cream);
+  }
+
+  .chameleon-row{
+    width:min(92%,880px);display:flex;align-items:center;justify-content:center;
+    gap:0;margin-top:30px;
+  }
+  .chameleon{
+    position:relative;width:228px;height:142px;flex:0 0 228px;
+  }
+  .chameleon .body{
+    position:absolute;left:38px;top:46px;width:128px;height:62px;border:2px solid var(--ink);
+    border-radius:50px;background:#8fcf9f;box-shadow:8px 8px 0 rgba(10,10,10,.08);
+  }
+  .chameleon .head{
+    position:absolute;left:145px;top:32px;width:72px;height:72px;border:2px solid var(--ink);
+    border-radius:44px 38px 42px 34px;background:#9eddaa;
+  }
+  .chameleon .eye{
+    position:absolute;left:187px;top:47px;width:17px;height:17px;border:2px solid var(--ink);
+    border-radius:50%;background:var(--cream);
+  }
+  .chameleon .eye::after{
+    content:"";position:absolute;left:5px;top:5px;width:5px;height:5px;border-radius:50%;background:var(--ink);
+  }
+  .chameleon .smile{
+    position:absolute;left:183px;top:72px;width:26px;height:14px;border-bottom:2px solid var(--ink);
+    border-radius:0 0 22px 22px;
+  }
+  .chameleon .leg{
+    position:absolute;width:28px;height:24px;border-left:2px solid var(--ink);border-bottom:2px solid var(--ink);
+    border-radius:0 0 0 12px;
+  }
+  .chameleon .leg.a{left:72px;top:100px;}
+  .chameleon .leg.b{left:132px;top:100px;}
+  .chameleon .crest{
+    position:absolute;left:154px;top:23px;width:12px;height:12px;border:2px solid var(--ink);
+    border-radius:50%;background:var(--accent);
+  }
+  .tail{
+    display:flex;align-items:center;gap:7px;margin-left:-4px;min-width:0;
+  }
+  .tail-bit{
+    min-width:78px;height:45px;border:1.5px solid var(--ink);border-radius:999px;
+    background:rgba(255,255,255,.62);display:flex;align-items:center;justify-content:center;
+    font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:rgba(10,10,10,.72);
+    transform:scaleX(.12);opacity:0;transform-origin:left center;
+  }
+  .tail-bit:last-child{background:var(--ink);color:var(--cream);}
+  .anim .tail-bit{animation:tailgrow .48s cubic-bezier(.2,.7,.2,1) forwards;}
+  .anim .tail-bit:nth-child(1){animation-delay:.55s;}
+  .anim .tail-bit:nth-child(2){animation-delay:.68s;}
+  .anim .tail-bit:nth-child(3){animation-delay:.81s;}
+  .anim .tail-bit:nth-child(4){animation-delay:.94s;}
+  .anim .tail-bit:nth-child(5){animation-delay:1.07s;}
+  .anim .tail-bit:nth-child(6){animation-delay:1.20s;}
+  @keyframes tailgrow{to{transform:scaleX(1);opacity:1;}}
+
+  .device{
+    position:relative;border:1.5px solid var(--line);background:#fff;
+    border-radius:10px;overflow:hidden;
+    box-shadow:0 24px 60px rgba(0,0,0,.22),0 4px 14px rgba(0,0,0,.12);
+    width:min(88%,880px);margin-top:28px;
+  }
+  .device .bar{
+    height:30px;background:var(--cream-2);border-bottom:1px solid var(--line-soft);
+    display:flex;align-items:center;gap:7px;padding:0 13px;
+  }
+  .device .bar i{width:9px;height:9px;border-radius:50%;display:block;background:#cfcabf;border:1px solid rgba(0,0,0,.12);}
+  .device .bar i:first-child{background:var(--accent);}
+  .device .bar span{margin-left:12px;font-family:var(--mono);font-size:11px;color:rgba(10,10,10,.45);letter-spacing:.04em;}
+
+  .chips{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:28px;max-width:820px;}
+  .chip{
+    font-family:var(--mono);font-size:12px;letter-spacing:.03em;color:var(--ink);
+    border:1px solid var(--line);background:rgba(255,255,255,.55);
+    padding:8px 13px;border-radius:7px;
+  }
+  .chip b{color:var(--accent);font-weight:700;}
+
+  .scene.dark{background:var(--ink);}
+  .scene.dark .kicker{color:#ff6b4f;}
+  .scene.dark .big,.scene.dark .pname{color:var(--cream);}
+  .scene.dark .lede,.scene.dark .pdesc,.scene.dark .ptag{color:rgba(244,241,234,.6);}
+  .scene.dark .chip{color:var(--cream);border-color:rgba(244,241,234,.25);background:rgba(255,255,255,.04);}
+  .scene.dark .panel{border-color:rgba(244,241,234,.22);background:rgba(255,255,255,.045);}
+  .scene.dark .panel b{color:var(--cream);}
+  .scene.dark .panel span{color:rgba(244,241,234,.58);}
+  .scene.dark .arrow{color:rgba(244,241,234,.45);}
+  .scene.dark .chameleon .body,.scene.dark .chameleon .head{background:#72c899;}
+  .scene.dark .tail-bit{border-color:rgba(244,241,234,.35);background:rgba(255,255,255,.05);color:rgba(244,241,234,.72);}
+  .scene.dark .tail-bit:last-child{background:var(--cream);color:var(--ink);}
+
+  .panels{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;width:min(92%,900px);margin-top:30px;}
+  .panel{
+    border:1px solid var(--line);background:rgba(255,255,255,.54);
+    border-radius:10px;padding:18px;min-height:154px;text-align:left;
+  }
+  .panel small{
+    font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;
+    color:rgba(10,10,10,.45);
+  }
+  .panel b{display:block;font-family:var(--disp);font-size:25px;letter-spacing:-.02em;margin:28px 0 9px;color:var(--ink);}
+  .panel span{font-size:13px;line-height:1.55;color:rgba(10,10,10,.58);}
+
+  .flow{
+    width:100%;display:grid;grid-template-columns:1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr;gap:8px;
+    align-items:center;padding:28px;
+  }
+  .flow .node{
+    min-height:104px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.62);
+    display:flex;flex-direction:column;justify-content:center;padding:14px;text-align:center;
+  }
+  .flow .node b{font-family:var(--disp);font-size:20px;letter-spacing:-.02em;color:var(--ink);margin-bottom:7px;}
+  .flow .node span{font-size:11px;color:rgba(10,10,10,.55);line-height:1.35;}
+  .arrow{font-size:18px;color:rgba(10,10,10,.45);text-align:center;}
+
+  .arch{
+    display:grid;grid-template-columns:1fr .28fr 1fr;gap:14px;width:min(94%,920px);margin-top:28px;
+  }
+  .lane{
+    border:1px solid var(--line);background:rgba(255,255,255,.56);border-radius:10px;padding:16px;
+  }
+  .lane-title{
+    font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:rgba(10,10,10,.48);
+    border-bottom:1px solid var(--line-soft);padding-bottom:10px;margin-bottom:12px;
+  }
+  .box{
+    border:1px solid var(--line-soft);background:#fff;border-radius:8px;padding:12px;margin-top:9px;text-align:left;
+  }
+  .box b{font-family:var(--disp);font-size:18px;color:var(--ink);letter-spacing:-.02em;}
+  .box span{display:block;font-size:12px;line-height:1.45;color:rgba(10,10,10,.58);margin-top:4px;}
+  .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;}
+  .pill{
+    border:1px solid var(--line);background:var(--ink);color:var(--cream);
+    font-size:11px;border-radius:999px;padding:8px 11px;text-align:center;white-space:nowrap;
+  }
+
+  .console{
+    padding:18px 20px;background:var(--ink);color:var(--cream);
+    font-family:var(--mono);font-size:13px;line-height:1.65;min-height:300px;
+  }
+  .console .pp{color:var(--accent);}
+  .console .ok{color:#72c899;}
+  .console .dim{color:rgba(244,241,234,.45);}
+
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:min(90%,860px);margin-top:26px;}
+  .metric{border:1px solid var(--line);background:#fff;border-radius:9px;padding:15px;text-align:left;}
+  .metric span{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:rgba(10,10,10,.45);}
+  .metric b{display:block;font-family:var(--disp);font-size:36px;letter-spacing:-.04em;margin-top:20px;color:var(--ink);}
+
+  .cta-line{font-family:var(--disp);font-weight:700;font-size:clamp(30px,5.4vw,66px);color:var(--ink);letter-spacing:-.02em;text-align:center;line-height:1.02;}
+  .cta-sub{font-family:var(--mono);font-size:14px;letter-spacing:.06em;color:rgba(10,10,10,.55);margin-top:22px;text-align:center;}
+  .install{
+    margin-top:26px;font-family:var(--mono);font-size:15px;color:var(--cream);
+    background:var(--ink);padding:14px 22px;border-radius:9px;display:inline-flex;gap:10px;align-items:center;
+  }
+  .install .pp{color:var(--accent);}
+
+  .up{transform:translateY(26px);opacity:0;}
+  .anim .up{animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards;}
+  @keyframes rise{to{transform:translateY(0);opacity:1;}}
+  .scene.anim{animation:fadein .5s ease forwards;}
+  @keyframes fadein{to{opacity:1;}}
+  .scene.out{animation:fadeout .45s ease forwards;}
+  @keyframes fadeout{to{opacity:0;}}
+
+  .scan{position:absolute;left:0;right:0;height:38%;z-index:5;pointer-events:none;
+    background:linear-gradient(180deg,transparent,rgba(255,77,46,.10),transparent);
+    transform:translateY(-120%);
+  }
+  .anim .scan{animation:scan 2.6s ease-in-out .4s infinite;}
+  @keyframes scan{0%{transform:translateY(-120%);}60%{transform:translateY(320%);}100%{transform:translateY(320%);}}
+
+  .replay{
+    position:absolute;z-index:80;bottom:14px;left:50%;transform:translateX(-50%);
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--ink);background:var(--cream);border:1px solid var(--line);
+    padding:9px 16px;border-radius:7px;cursor:pointer;opacity:0;transition:opacity .4s;
+  }
+  .replay.show{opacity:1;}
+  .replay:hover{background:var(--ink);color:var(--cream);}
+
+  @media(max-width:760px){
+    body{overflow:auto;align-items:flex-start;}
+    .stage{aspect-ratio:auto;min-height:100vh;}
+    .panels,.metrics{grid-template-columns:1fr;}
+    .flow{grid-template-columns:1fr;padding:18px;}
+    .arrow{transform:rotate(90deg);}
+    .arch{grid-template-columns:1fr;}
+    .mid{flex-direction:row;flex-wrap:wrap;}
+  }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="hud tl">chameleon</div>
+  <div class="hud tr" id="hudStatus"><span class="dot"></span> healing</div>
+  <div class="hud bl" id="hudScene">01 / 07</div>
+  <div class="hud br">self-healing agents</div>
+  <div class="progress" id="prog"></div>
+
+  <section class="scene s1">
+    <div class="up mark">c</div>
+    <div class="up kicker">self-healing agents</div>
+    <h1 class="up big">Tracing shows<br>what happened.</h1>
+    <p class="up lede">Chameleon decides what changes next: from trace and eval signal to a verified repair.</p>
+    <div class="up chameleon-row">
+      <div class="chameleon" aria-label="Cartoon Chameleon">
+        <div class="body"></div><div class="head"></div><div class="eye"></div><div class="smile"></div>
+        <div class="crest"></div><div class="leg a"></div><div class="leg b"></div>
+      </div>
+      <div class="tail"><div class="tail-bit">trace</div><div class="tail-bit">eval</div></div>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="up kicker">the gap</div>
+    <h2 class="up big">You traced it.<br>You evaluated it.</h2>
+    <p class="up lede">Now what? Manually resolve every failure? Track every root cause? Compare every prompt, tool, config, and code fix by hand?</p>
+    <div class="up panels">
+      <div class="panel"><small>01</small><b>trace</b><span>You can see the LLM calls, tool calls, latency, cost, and errors.</span></div>
+      <div class="panel"><small>02</small><b>evaluate</b><span>You can score exact match, judge quality, tool use, and guardrails.</span></div>
+      <div class="panel"><small>03</small><b>now what?</b><span>The backlog still needs grouping, ownership, fixes, and verification.</span></div>
+    </div>
+  </section>
+
+  <section class="scene dark">
+    <div class="up kicker">manual does not scale</div>
+    <h2 class="up big">How many issues<br>can you keep track of?</h2>
+    <p class="up lede">Every failed run creates another decision: prompt, tool, config, code, or data? Chameleon turns that pile into a repair queue.</p>
+    <div class="up chips">
+      <span class="chip"><b>wrong answer</b></span>
+      <span class="chip"><b>bad search</b></span>
+      <span class="chip"><b>missing tool</b></span>
+      <span class="chip"><b>weak prompt</b></span>
+      <span class="chip"><b>bad config</b></span>
+      <span class="chip"><b>tool regression</b></span>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="up kicker">the healing tail</div>
+    <h2 class="up big">The tail grows<br>with every signal.</h2>
+    <p class="up lede">Chameleon extends the workflow past observability: traces and evals become distillation, optimizers, and a gated heal.</p>
+    <div class="up chameleon-row">
+      <div class="chameleon" aria-label="Cartoon Chameleon with growing workflow tail">
+        <div class="body"></div><div class="head"></div><div class="eye"></div><div class="smile"></div>
+        <div class="crest"></div><div class="leg a"></div><div class="leg b"></div>
+      </div>
+      <div class="tail">
+        <div class="tail-bit">agent</div><div class="tail-bit">traces</div><div class="tail-bit">evals</div>
+        <div class="tail-bit">distill</div><div class="tail-bit">optimize</div><div class="tail-bit">heal</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="up kicker">architecture</div>
+    <h2 class="up big">Route each failure<br>to the right repair.</h2>
+    <div class="up arch">
+      <div class="lane">
+        <div class="lane-title">evidence layer</div>
+        <div class="box"><b>agent run</b><span>Current prompt, model, tools, and config attempt the task.</span></div>
+        <div class="box"><b>trace adapter</b><span>etrace, Langfuse, LangSmith, or custom spans normalize to Trace.</span></div>
+        <div class="box"><b>eval runner</b><span>Exact match, LLM judge, tool count, no-error, and cost scorers.</span></div>
+        <div class="box"><b>distillation</b><span>Root cause, suggested fix, fix type, and target component.</span></div>
+      </div>
+      <div class="mid">
+        <div class="pill">failure records</div>
+        <div class="pill">fix_type routing</div>
+        <div class="pill">candidate</div>
+      </div>
+      <div class="lane">
+        <div class="lane-title">repair layer</div>
+        <div class="box"><b>gepa</b><span>Optimizes system prompt, tool policy, answer format, and verification policy.</span></div>
+        <div class="box"><b>agent optimizer</b><span>Proposes code, tool, and config fixes when the issue is agent-side.</span></div>
+        <div class="box"><b>holdout gate</b><span>Accepts only if quality improves without unsafe cost or transfer regression.</span></div>
+        <div class="box"><b>promotion</b><span>The accepted candidate becomes the next baseline.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene dark">
+    <div class="up kicker">in action</div>
+    <h2 class="up big">Baseline fails.<br>Chameleon heals.</h2>
+    <div class="up device">
+      <div class="bar"><i></i><i></i><i></i><span>terminal - chameleon heal</span></div>
+      <pre class="console"><span class="pp">$ chameleon run baseline</span>
+eval: failed_exact_match
+trace: agent.llm_call x4
+trace: agent.tool.web_search x1
+distill: root_cause="answered without verification"
+distill: fix_type=prompt
+
+<span class="pp">$ chameleon optimize</span>
+route: prompt_policy -> GEPA
+gepa: candidate-04 updates verification_policy
+agent_optimizer: no code patch required
+
+<span class="pp">$ chameleon heal --gate holdout</span>
+<span class="ok">accepted: optimized agent promoted</span>
+<span class="dim">baseline -&gt; healed artifact v2</span></pre>
+    </div>
+  </section>
+
+  <section class="scene">
+    <div class="up kicker">demo result</div>
+    <h2 class="up big">Not just trace<br>and eval. Heal.</h2>
+    <div class="up metrics">
+      <div class="metric"><span>correctness</span><b>+26 pts</b></div>
+      <div class="metric"><span>error rate</span><b>-73%</b></div>
+      <div class="metric"><span>tool discipline</span><b>+41%</b></div>
+      <div class="metric"><span>cost guardrail</span><b>+12%</b></div>
+    </div>
+    <div class="up chameleon-row">
+      <div class="chameleon" aria-label="Cartoon Chameleon with complete tail">
+        <div class="body"></div><div class="head"></div><div class="eye"></div><div class="smile"></div>
+        <div class="crest"></div><div class="leg a"></div><div class="leg b"></div>
+      </div>
+      <div class="tail">
+        <div class="tail-bit">agent</div><div class="tail-bit">traces</div><div class="tail-bit">evals</div>
+        <div class="tail-bit">distill</div><div class="tail-bit">optimize</div><div class="tail-bit">heal</div>
+      </div>
+    </div>
+    <div class="up cta-sub">Chameleon keeps the failure backlog organized, proposes repairs, and only ships improvements.</div>
+  </section>
+
+  <button class="replay" id="replay">replay</button>
+</div>
+
+<script>
+  const scenes=[...document.querySelectorAll('.scene')];
+  const prog=document.getElementById('prog');
+  const hudScene=document.getElementById('hudScene');
+  const hudStatus=document.getElementById('hudStatus');
+  const replay=document.getElementById('replay');
+  const N=scenes.length;
+  let current=0;
+
+  const statusFor=['intro','what next','manual backlog','healing tail','architecture','optimizer','healed'];
+
+  function show(index){
+    current=(index+N)%N;
+    scenes.forEach((s)=>{
+      s.className=s.className.replace(/\b(anim|out)\b/g,'').trim();
+      s.style.opacity=0;
+      s.style.zIndex=2;
+    });
+    const scene=scenes[current];
+    scene.style.zIndex=5;
+    scene.classList.add('anim');
+    [...scene.querySelectorAll('.up')].forEach((el,k)=>{el.style.animationDelay=(0.12+k*0.13)+'s';});
+    hudScene.textContent=String(current+1).padStart(2,'0')+' / 0'+N;
+    hudStatus.innerHTML='<span class="dot"></span> '+statusFor[current];
+    prog.style.transition='none';
+    prog.style.width=((current+1)/N*100)+'%';
+    replay.classList.toggle('show',current===N-1);
+  }
+
+  function next(){show(current+1);}
+  function prev(){show(current-1);}
+
+  replay.addEventListener('click',()=>show(0));
+  document.addEventListener('keydown',(event)=>{
+    if(event.code==='Space' || event.key==='ArrowRight'){
+      event.preventDefault();
+      next();
+    }
+    if(event.key==='ArrowLeft'){
+      event.preventDefault();
+      prev();
+    }
+  });
+  document.getElementById('stage').addEventListener('click',next);
+  show(0);
+</script>
+</body>
+</html>

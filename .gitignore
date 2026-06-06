@@ -1,5 +1,13 @@
 docs/
-src/**/__pycache__/
+**/__pycache__/
 .env
 .venv/
 .env*
+.evaris/
+**/.env
+**/.env.local
+examples/data/local*.jsonl
+examples/data/local*.json
+examples/data/gaia_attachments/
+!.env.example
+!**/.env.example
