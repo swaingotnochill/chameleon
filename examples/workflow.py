@@ -640,16 +640,22 @@ class GAIAAdapter:
         """
         from gepa.core.adapter import EvaluationBatch
 
+        candidate_id = candidate.get("candidate_id", "unknown")
+        cid = candidate_id[:20]
+        print(f"\n  🧪 [{cid}] Evaluating {len(batch)} tasks...", flush=True)
+
         outputs: list[str] = []
         scores: list[float] = []
         trajectories: list[dict[str, Any]] | None = [] if capture_traces else None
 
         config = {
             "task_model": self.task_model,
-            "candidate_id": candidate.get("candidate_id", "unknown"),
+            "candidate_id": candidate_id,
         }
 
-        for task in batch:
+        for i, task in enumerate(batch):
+            short_q = str(task.get("input", ""))[:45]
+            print(f"    [{cid}] task {i+1}/{len(batch)}: {short_q}...", end="", flush=True)
             try:
                 # GEPA may call evaluate() from the main thread or its own threads.
                 # Always use a thread with a fresh loop to avoid nesting with the
@@ -666,6 +672,8 @@ class GAIAAdapter:
                 loop.shutdown(wait=False)
                 answer = trace.output
                 correct = normalize_answer(answer) == normalize_answer(task.get("expected", ""))
+                status = "✅" if correct else "❌"
+                print(f" → {status} ({answer[:40]})", flush=True)
 
                 if trajectories is not None:
                     trajectories.append({
@@ -683,6 +691,7 @@ class GAIAAdapter:
             except Exception as exc:
                 scores.append(0.0)
                 outputs.append(f"ERROR: {exc}")
+                print(f" → ⚠️  {exc}", flush=True)
                 if trajectories is not None:
                     trajectories.append({
                         "task_id": task.get("id"),
@@ -693,6 +702,9 @@ class GAIAAdapter:
                         "error": str(exc),
                         "score": 0.0,
                     })
+        avg = sum(scores) / len(scores) if scores else 0
+        passed = sum(1 for s in scores if s >= 1.0)
+        print(f"  📊 [{cid}] Result: {passed}/{len(batch)} passed (avg={avg:.2f})", flush=True)
 
         return EvaluationBatch(
             outputs=outputs,
@@ -728,6 +740,10 @@ class GAIAAdapter:
                 })
             if items:
                 ret[component_name] = items
+
+        failures = sum(len(v) for v in ret.values())
+        if failures:
+            print(f"  🔍 Reflecting on {failures} failures across {list(ret.keys())}", flush=True)
 
         return ret
 
