@@ -46,6 +46,10 @@ def main():
     optimize_tasks = [json.loads(l) for l in Path(args.optimize_manifest).read_text().strip().split("\n")]
     holdout_tasks = [json.loads(l) for l in Path(args.holdout_manifest).read_text().strip().split("\n")]
 
+    task_model = config.get("task_model", "glm-5")
+    reflection_model = config.get("reflection_model", "glm-5")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.z.ai/api/paas/v4")
+
     if args.debug:
         print(f"Baseline artifact: {list(baseline_artifact.keys())}")
         print(f"Task model: {task_model}")
@@ -60,9 +64,6 @@ def main():
     agent_module.configure_environment()
     agent_module.init_tracing()
 
-    task_model = config.get("task_model", "glm-5")
-    reflection_model = config.get("reflection_model", "glm-5")
-
     adapter = GAIAAdapter(
         agent_module=agent_module,
         task_model=task_model,
@@ -73,7 +74,6 @@ def main():
 
     # Reflection LLM callable for GEPA
     from openai import AsyncOpenAI
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.z.ai/api/paas/v4")
     api_key = os.environ.get("OPENAI_API_KEY")
     client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
