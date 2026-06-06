@@ -87,14 +87,14 @@ def init_tracing() -> None:
     import etrace
     from etrace.otel import OtelExporter
 
-    exporters = []
+    exporters = [etrace.InMemoryExporter()]  # Always keep in-memory for scorers
     if os.environ.get("ETRACE_EXPORT", "studio") == "studio":
         exporters.append(OtelExporter())
 
     etrace.init(
         service_name="langchain-gaia-agent",
         environment=os.environ.get("ETRACE_ENVIRONMENT", "local"),
-        exporters=exporters or None,
+        exporters=exporters,
         calculate_costs=True,
     )
 
@@ -353,6 +353,16 @@ async def solve(
     max_iterations = config.get("max_iterations", 10)
     effective_recursion_limit = max_iterations * 5  # each iteration = ~5 recursion steps (model + tools + edges)
 
+    # Capture the in-memory exporter to collect all spans (incl. LangChain tool calls)
+    mem_exporter = None
+    for exp in etrace._exporters:
+        if hasattr(exp, "_spans") and hasattr(exp, "get_finished_spans"):
+            mem_exporter = exp
+            break
+    if mem_exporter:
+        mem_exporter.clear()
+    pre_span_count = len(mem_exporter._spans) if mem_exporter else 0
+
     with etrace.trace("gaia.task", kind="agent", input=task, attributes=attrs) as root_span:
         result = await asyncio.to_thread(
             agent.invoke,
@@ -367,22 +377,74 @@ async def solve(
         trace_id = getattr(root_span, "trace_id", None)
 
     duration_ms = (time.time() - start) * 1000
-    return Trace(
-        input=task["input"],
+
+    # Build evaris Span tree from collected etrace spans
+    root = Span(
+        name="gaia.task",
+        kind="agent",
+        input=task,
         output=answer,
-        root=Span(
-            name="gaia.task",
-            kind="agent",
-            input=task,
-            output=answer,
-            duration_ms=duration_ms,
-            attributes=attrs
-            | {
-                "trace_id": trace_id,
-                "duration_ms": duration_ms,
-            },
-        ),
+        duration_ms=duration_ms,
+        attributes=attrs
+        | {
+            "trace_id": trace_id,
+            "duration_ms": duration_ms,
+        },
     )
+
+    if mem_exporter:
+        # Get spans created during this run (after pre_span_count)
+        run_spans = mem_exporter._spans[pre_span_count:]
+        # Convert all etrace spans to evaris Spans and build the tree
+        span_map: dict[str, tuple[Span, str | None]] = {}
+        for es in run_spans:
+            s = Span(
+                name=es.name,
+                kind=es.kind.value if hasattr(es.kind, 'value') else str(es.kind),
+                input=es.input,
+                output=es.output,
+                duration_ms=(es.duration_ns or 0) / 1_000_000,
+                attributes=dict(es.attributes) if es.attributes else {},
+            )
+            span_map[es.span_id] = (s, es.parent_span_id)
+
+        # Find the root span (no parent) and use it as our root
+        for span_id, (s, pid) in span_map.items():
+            if pid is None:
+                s.input = task
+                s.output = answer
+                s.attributes.update(attrs)
+                s.attributes["trace_id"] = trace_id
+                s.attributes["duration_ms"] = duration_ms
+                root = s
+                break
+
+        # Build the tree: attach each child to its parent
+        visited: set[str] = set()
+        for span_id, (child, parent_id) in span_map.items():
+            if parent_id and parent_id in span_map and span_id not in visited:
+                _attach_child(span_map, child, parent_id, visited)
+
+        # Any remaining unattached spans go under root
+        for span_id, (child, parent_id) in span_map.items():
+            if span_id not in visited and child is not root:
+                root.children.append(child)
+                visited.add(span_id)
+
+    return Trace(input=task["input"], output=answer, root=root)
+
+
+def _attach_child(span_map: dict[str, tuple], child: Span, parent_id: str, visited: set[str]) -> None:
+    """Attach a child span to its parent by walking up the tree."""
+    if parent_id in visited:
+        return
+    parent = span_map.get(parent_id)
+    if parent:
+        visited.add(parent_id)
+        parent[0].children.append(child)
+    else:
+        # Parent not in map — orphan, will be caught by fallback
+        pass
 
 
 def load_manifest(path: Path) -> list[dict[str, Any]]:
