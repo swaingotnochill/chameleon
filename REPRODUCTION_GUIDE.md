@@ -19,8 +19,7 @@ cp .env.example .env
 # Edit .env and add your ZAI_API_KEY
 
 # Verify
-source .venv/bin/activate
-python -c "from evaris import scorers; print('OK')"
+chameleon --help
 ```
 
 ## Project Structure
@@ -54,14 +53,14 @@ Run on both datasets separately. Use `--concurrency 1` to avoid rate limits.
 
 ```bash
 # Terminal 1 — Holdout baseline
-python -u examples/workflow.py --mode eval \
+chameleon eval \
   --manifest examples/data/local.gaia_level1_holdout_15.jsonl \
   --config examples/mvp.config.json \
   --run-tag baseline-holdout \
   --concurrency 1 --task-timeout 180
 
 # Terminal 2 — Optimize baseline
-python -u examples/workflow.py --mode eval \
+chameleon eval \
   --manifest examples/data/local.gaia_level1_optimize_15.jsonl \
   --config examples/mvp.config.json \
   --run-tag baseline-optimize \
@@ -87,7 +86,7 @@ Results are saved to `examples/.evaris/eval-runs/{run_tag}-*.json` with incremen
 The full self-improvement loop in one command:
 
 ```bash
-python -u examples/workflow.py --mode improve \
+chameleon improve \
   --optimize-eval examples/.evaris/eval-runs/baseline-optimize-*.json \
   --baseline-eval examples/.evaris/eval-runs/baseline-holdout-*.json \
   --manifest-holdout examples/data/local.gaia_level1_holdout_15.jsonl \
@@ -126,18 +125,17 @@ asyncio.run(_distill_async(
 
 ### GEPA only
 ```bash
-python -u examples/run_gepa.py \
-  --baseline-artifact examples/artifacts/prompts/baseline.json \
-  --optimize-manifest examples/data/local.gaia_level1_optimize_15.jsonl \
-  --holdout-manifest examples/data/local.gaia_level1_holdout_15.jsonl \
+chameleon eval \
+  --manifest examples/data/local.gaia_level1_holdout_15.jsonl \
   --config examples/mvp.config.json \
-  --output-dir examples/.evaris/experiment-runs/improve-run-1 \
-  --debug
+  --artifact examples/.evaris/experiment-runs/improve-run-1/artifacts/best-candidate.json \
+  --run-tag optimized \
+  --concurrency 1 --task-timeout 180
 ```
 
 ### Eval with custom artifact
 ```bash
-python -u examples/workflow.py --mode eval \
+chameleon eval \
   --manifest examples/data/local.gaia_level1_holdout_15.jsonl \
   --config examples/mvp.config.json \
   --artifact examples/.evaris/experiment-runs/improve-run-1/artifacts/best-candidate.json \
@@ -174,7 +172,7 @@ Edit `examples/mvp.config.json`:
 ## CLI Reference
 
 ```
-python examples/workflow.py --mode eval \
+chameleon eval \
   --manifest <path>              # GAIA task manifest (JSONL)
   --config <path>                # Config file
   --run-tag <string>             # Name for this run
@@ -189,7 +187,7 @@ python examples/workflow.py --mode eval \
 ```
 
 ```
-python examples/workflow.py --mode improve \
+chameleon improve \
   --optimize-eval <path>         # Optimize eval JSON (glob)
   --baseline-eval <path>         # Holdout eval JSON (glob)
   --manifest-holdout <path>      # Holdout manifest (JSONL)
@@ -210,21 +208,8 @@ Each task saves an incremental checkpoint. If the process crashes or is killed:
 cp examples/.evaris/eval-runs/baseline-*.checkpoint.json \
    examples/.evaris/eval-runs/baseline-final.json
 
-# Create a manifest with only the missing tasks
-python -c "
-import json
-done = json.load(open('examples/.evaris/eval-runs/baseline-final.json'))
-all_tasks = [json.loads(l) for l in open('examples/data/local.gaia_level1_holdout_15.jsonl')]
-done_ids = {r['id'] for r in done['results']}
-missing = [t for t in all_tasks if t['id'] not in done_ids]
-with open('/tmp/remaining.jsonl', 'w') as f:
-    for t in missing:
-        f.write(json.dumps(t) + '\n')
-print(f'{len(missing)} remaining')
-"
-
 # Re-run only missing tasks
-python -u examples/workflow.py --mode eval \
+chameleon eval \
   --manifest /tmp/remaining.jsonl \
   --config examples/mvp.config.json \
   --run-tag baseline-fill \

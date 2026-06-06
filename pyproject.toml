@@ -12,6 +12,10 @@ dependencies = [
     "python-dotenv>=1.2.2",
 ]
 
+[project.scripts]
+evaris = "evaris.cli:main"
+chameleon = "evaris.cli:main"
+
 [project.optional-dependencies]
 etrace = ["etrace-py[otel]>=0.1.0"]
 
