@@ -573,6 +573,28 @@ async def run_eval(args: argparse.Namespace) -> None:
     checkpoint_path.unlink(missing_ok=True)
     print(f"\nSaved eval output: {output_path}")
 
+    # Compact chameleon-style summary
+    print()
+    print(f"  {chr(0x1b)}[1m{'━' * 30} chameleon {chr(0x1b)}[0m")
+    records = results.results
+    em_scores = [s for r in records for s in r.scores if s.name == 'normalized_exact_match']
+    em_pass = sum(1 for s in em_scores if s.value is True)
+    em_total = len(em_scores)
+    errs = sum(1 for r in records if r.error)
+    tc_scores = [s for r in records for s in r.scores if s.name == 'tool_call_count']
+    tc_avg = sum(s.value for s in tc_scores) / len(tc_scores) if tc_scores else 0
+    recovered = sum(1 for r in records if any(s.name == 'normalized_exact_match' and s.value for s in r.scores))
+    print(f"  {chr(0x1b)}[1m$ chameleon eval {chr(0x1b)}[0m")
+    print(f"    exact_match: {em_pass}/{em_total}")
+    print(f"    errors:      {errs}")
+    print(f"    avg_tools:   {tc_avg:.1f}")
+    if args.run_tag:
+        print(f"    run_tag:     {args.run_tag}")
+    print(f"    model:       {config.get('task_model', 'unknown')}")
+    print()
+    print(f"  {chr(0x1b)}[1m{'━' * 36}{chr(0x1b)}[0m")
+    print()
+
 
 # ── GEPA Adapter ───────────────────────────────────────────────────────
 
