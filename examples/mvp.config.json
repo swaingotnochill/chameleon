@@ -14,9 +14,9 @@
     "level2_transfer": 5
   },
   "gepa": {
-    "max_candidates": 8,
+    "max_candidates": 4,
     "minibatch_size": 3,
-    "max_task_runs": 24,
+    "max_task_runs": 12,
     "reflection_calls": 8
   }
 }

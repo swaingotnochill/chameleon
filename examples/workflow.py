@@ -230,6 +230,138 @@ def export_results(
     )
 
 
+def print_pipeline_summary(
+    *,
+    eval_data: dict,
+    failures: list[dict],
+    agent_fixes: list[dict],
+    seed_candidate: dict,
+    best_candidate: dict | None = None,
+    gepa_result=None,
+    opt_eval_data: dict | None = None,
+    accepted: bool | None = None,
+    reject_reason: str = "",
+) -> None:
+    """Print a chameleon-style compact pipeline summary."""
+
+    def dim(s):
+        return f"\033[2m{s}\033[0m"
+
+    def bold(s):
+        return f"\033[1m{s}\033[0m"
+
+    def green(s):
+        return f"\033[32m{s}\033[0m"
+
+    def red(s):
+        return f"\033[31m{s}\033[0m"
+
+    def yellow(s):
+        return f"\033[33m{s}\033[0m"
+
+    def cyan(s):
+        return f"\033[36m{s}\033[0m"
+
+    agg = eval_data.get("aggregate", {})
+    em_pass = agg.get("exact_match", {}).get("passed", 0)
+    em_total = agg.get("exact_match", {}).get("total", 0)
+    n_err = agg.get("errors", 0)
+    n_tasks = len(eval_data.get("results", []))
+
+    print()
+    print(f"  {bold('━━━━━━━━━━ chameleon ━━━━━━━━━━')}")
+    print()
+    print(f"  {bold('$ chameleon run baseline')}")
+    print(f"    eval:     {em_pass}/{em_total} exact_match, {n_err} errors, {n_tasks} tasks")
+
+    # Distill summary
+    fix_types = {}
+    root_causes = []
+    for f in failures:
+        ft = f.get("fix_type", "unknown")
+        fix_types[ft] = fix_types.get(ft, 0) + 1
+        rc = f.get("root_cause", "")
+        if rc:
+            root_causes.append(rc)
+
+    print(f"  {bold('$ chameleon distill')}")
+    print(f"    failures: {len(failures)}/{n_tasks} tasks failed")
+    if fix_types:
+        parts = [f"{v}→{k}" for k, v in sorted(fix_types.items())]
+        print(f"    routes:   {', '.join(parts)}")
+    # Show top root causes
+    if root_causes:
+        for rc in root_causes[:2]:
+            print(f"    trace:    {dim(rc[:90])}")
+
+    # Agent optimizer summary
+    print(f"  {bold('$ chameleon optimize')}")
+    if agent_fixes:
+        for fix in agent_fixes:
+            ftype = fix.get("type", "?")
+            ffile = fix.get("file", "?")
+            fdesc = fix.get("description", "")[:70]
+            fkey = fix.get("key", "")
+            print(f"    route:    {ftype} → {yellow('pi_agent')}")
+            if ftype == "config":
+                print(f"    patch:    {ffile} → {fkey}: {fix.get('old_value', '?')} → {green(str(fix.get('value')))}")
+            else:
+                print(f"    patch:    {cyan(ffile)}")
+                print(f"              {dim(fdesc)}")
+    else:
+        print(f"    agent_optimizer: no code patch required")
+
+    # GEPA summary
+    if best_candidate:
+        changed_fields = []
+        for key in seed_candidate:
+            if seed_candidate.get(key) != best_candidate.get(key, ""):
+                changed_fields.append(key)
+
+        if changed_fields:
+            print(f"    route:    {', '.join(changed_fields)} → {yellow('GEPA')}")
+            if gepa_result:
+                print(f"    gepa:     {gepa_result.num_candidates} candidates explored")
+            for field in changed_fields:
+                old = seed_candidate[field][:50]
+                new = best_candidate[field][:50]
+                print(f"    patch:    {cyan(field)}")
+                print(f"              {dim(old)}")
+                print(f"              {green(new)}")
+        else:
+            print(f"    gepa:     no prompt mutations accepted")
+    else:
+        print(f"    gepa:     not run")
+
+    # Eval + accept/reject
+    if opt_eval_data:
+        oagg = opt_eval_data.get("aggregate", {})
+        oem_pass = oagg.get("exact_match", {}).get("passed", 0)
+        oem_total = oagg.get("exact_match", {}).get("total", 0)
+        o_err = oagg.get("errors", 0)
+        delta = oem_pass - em_pass
+
+        print(f"  {bold('$ chameleon heal --gate holdout')}")
+        print(f"    eval:     {oem_pass}/{oem_total} exact_match, {o_err} errors")
+        if delta > 0:
+            print(f"    delta:    {green(f'+{delta} exact_match')} ({em_pass}→{oem_pass})")
+        elif delta < 0:
+            print(f"    delta:    {red(f'{delta} exact_match')} ({em_pass}→{oem_pass})")
+        else:
+            print(f"    delta:    {yellow('no change')} ({em_pass}→{oem_pass})")
+
+        if accepted:
+            print(f"    verdict:  {green('✅ ACCEPTED')}")
+        elif accepted is False:
+            print(f"    verdict:  {red('❌ REJECTED')} — {reject_reason}")
+        else:
+            print(f"    verdict:  {yellow('PENDING')}")
+
+    print()
+    print(f"  {bold('━━━━━━━━━━━━━━━━━━━━━━━━━━━━')}")
+    print()
+
+
 def print_summary(results: EvalResults) -> None:
     records = results.results
     errors = [result for result in records if result.error]
@@ -497,13 +629,19 @@ class GAIAAdapter:
 
         for task in batch:
             try:
-                coro = asyncio.wait_for(
-                    self.agent.solve(task, config=config, artifact=candidate),
-                    timeout=self.task_timeout,
-                )
-                # Always run in a fresh loop — GEPA calls evaluate() from its own threads
-                # so asyncio.run() is safe here regardless of main loop state
-                trace = asyncio.run(coro)
+                # GEPA may call evaluate() from the main thread or its own threads.
+                # Always use a thread with a fresh loop to avoid nesting with the
+                # outer asyncio.run(main()) event loop.
+                from concurrent.futures import ThreadPoolExecutor
+                loop = ThreadPoolExecutor(max_workers=1)
+                trace = loop.submit(
+                    asyncio.run,
+                    asyncio.wait_for(
+                        self.agent.solve(task, config=config, artifact=candidate),
+                        timeout=self.task_timeout,
+                    )
+                ).result()
+                loop.shutdown(wait=False)
                 answer = trace.output
                 correct = normalize_answer(answer) == normalize_answer(task.get("expected", ""))
 
@@ -859,6 +997,25 @@ async def run_improve(args: argparse.Namespace) -> None:
         print(f"To apply, run manually or use: --apply-optimizer agent")
 
     print(f"\nExperiment output: {output_dir}")
+
+    # ── Pipeline summary (chameleon UX) ──────────────────────────────
+    failures_data = []
+    if failures_path.exists():
+        failures_data = [json.loads(l) for l in failures_path.read_text().strip().split("\n") if l.strip()]
+
+    optimize_eval_data = json.loads(optimize_eval_path.read_text())
+
+    print_pipeline_summary(
+        eval_data=optimize_eval_data,
+        failures=failures_data,
+        agent_fixes=agent_fixes,
+        seed_candidate=seed_candidate,
+        best_candidate=best_candidate,
+        gepa_result=gepa_result,
+        opt_eval_data=opt_data if accepted else None,
+        accepted=accepted,
+        reject_reason=reason if not accepted else "",
+    )
 
 
 # ── CLI ───────────────────────────────────────────────────────────────

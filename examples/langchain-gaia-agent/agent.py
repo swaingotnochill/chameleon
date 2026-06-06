@@ -30,7 +30,7 @@ ROOT = AGENT_DIR.parents[1]
 DEFAULT_CONFIG: dict[str, Any] = {
     "candidate_id": "baseline",
     "task_model": "glm-5",
-    "max_output_tokens_per_call": 4096,
+    "max_output_tokens_per_call": 16384,
     "request_timeout_seconds": 90,
     "recursion_limit": 25,
     "max_iterations": 10,
@@ -104,7 +104,13 @@ def extract_text_from_agent_result(result: dict[str, Any]) -> str:
     for msg in reversed(messages):
         content = getattr(msg, "content", None)
         if isinstance(content, str) and content.strip():
-            return content.strip()
+            text = content.strip()
+            # If multi-line, return only the last non-empty line (capped 200 chars)
+            # so exact-match scoring sees the bare answer (e.g. "3")
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            if len(lines) > 1:
+                return lines[-1][:200]
+            return text[:200]
     return str(result)
 
 
@@ -287,7 +293,7 @@ def build_agent(config: dict[str, Any], artifact: dict[str, Any]):
         api_key=SecretStr(os.environ["OPENAI_API_KEY"]),
         base_url=os.environ.get("OPENAI_BASE_URL", ZAI_BASE_URL),
         temperature=0,
-        max_completion_tokens=config.get("max_output_tokens_per_call", 4096),
+        max_completion_tokens=config.get("max_output_tokens_per_call", 16384),
         max_retries=2,
         timeout=config.get("request_timeout_seconds", 90),
     )
