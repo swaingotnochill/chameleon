@@ -1,0 +1,5 @@
+docs/
+src/**/__pycache__/
+.env
+.venv/
+.env*
